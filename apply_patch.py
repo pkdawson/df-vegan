@@ -4,7 +4,12 @@ import os
 import sys
 import shutil
 
+from hashlib import sha256
+import pickle
+
 import diff_match_patch
+
+patched_files = {}
 
 def copy_file(fpath, dest_root):
     src_dir = os.path.split(fpath)[0]
@@ -13,7 +18,12 @@ def copy_file(fpath, dest_root):
 
 def apply_diff(fpath, dest_root):
     dest_file = os.path.join(dest_root, os.path.splitext(fpath)[0]) + ".txt"
-    print(dest_file)
+
+    with file(dest_file, 'r') as fi:
+        h = sha256(fi.read()).hexdigest()
+        if h == patched_files.get(fpath):
+            print('Already applied: %s' % fpath)
+            return
 
     dmp = diff_match_patch.diff_match_patch()
     patches = []
@@ -32,27 +42,48 @@ def apply_diff(fpath, dest_root):
 
     with file(dest_file, 'w') as fout:
         fout.write(patched_text)
+    patched_files[fpath] = sha256(patched_text).hexdigest()
 
+def do_patch(patch_name, dest):
+    os.chdir(patch_name)
+    try:
+        with file('patched_files.pickle', 'r') as fi:
+            global patched_files
+            patched_files = pickle.load(fi)
+    except IOError:
+        pass
+
+    for root, dirs, files in os.walk('.'):
+        for fn in files:
+            fpath = os.path.join(root, fn)
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in ('.txt', '.lua'):
+                copy_file(fpath, dest)
+            elif ext in ('.diff', '.patch'):
+                apply_diff(fpath, dest)
+
+    with file('patched_files.pickle', 'w') as fi:
+        pickle.dump(patched_files, fi, 0)
+    os.chdir('..')
 
 def main():
-    if len(sys.argv) < 2:
-        print('Usage: %s <path of Dwarf Fortress>' % sys.argv[0])
+    if len(sys.argv) < 3:
+        print('Usage: %s <patch name> <Dwarf Fortress directory>' % sys.argv[0])
         return
 
-    dest = sys.argv[1]
+    patch_dir = sys.argv[1]
+    if not os.path.isdir(patch_dir):
+        print('Patch not found: %s' % patch_dir)
+        return
+
+    dest = sys.argv[2]
     dest_raw = os.path.join(dest, 'raw')
     if not os.path.isdir(dest_raw):
         print('Raw directory not found: %s' % dest_raw)
         return
 
-    for root, dirs, files in os.walk('raw'):
-        for fn in files:
-            fpath = os.path.join(root, fn)
-            ext = os.path.splitext(fn)[1].lower()
-            if ext in ('.txt'):
-                copy_file(fpath, dest)
-            elif ext in ('.diff', '.patch'):
-                apply_diff(fpath, dest)
+    do_patch(patch_dir, dest)
+
 
 if __name__ == '__main__':
     main()
